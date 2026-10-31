@@ -38,8 +38,8 @@ def to_wav16k(src, tmpdir):
         raise RuntimeError(f"ffmpeg failed: {r.stderr.strip()[:200]}")
     return out
 
-def run_ytdlp(args, cookies=None):
-    cmd = [YTDLP] + args
+def run_ytdlp(args, url, cookies=None):
+    cmd = [YTDLP, *args, url]
     if cookies:
         cmd += ["--cookies", cookies]
     return subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -74,10 +74,13 @@ def parse_vtt(path):
 
 def lane_subtitle(url, cookies):
     with tempfile.TemporaryDirectory(prefix="pi-hear-sub-") as tmp:
-        r = run_ytdlp(["--skip-download", "--write-auto-subs", "--sub-format", "vtt",
-                       "--sub-langs", "zh-Hans,zh-CN,zh,en",
-                       "-o", os.path.join(tmp, "sub.%(ext)s"), "--no-playlist"], cookies)
-        vtts = sorted(glob.glob(os.path.join(tmp, "*.vtt")))
+        # --write-subs AND --write-auto-subs: bilibili exposes its AI subs
+        # as REGULAR subs (ai-zh, srt) while youtube-style platforms use auto-subs
+        r = run_ytdlp(["--skip-download", "--write-subs", "--write-auto-subs",
+                       "--sub-langs", "zh-Hans,ai-zh,zh-CN,zh,en",
+                       "-o", os.path.join(tmp, "sub.%(ext)s"), "--no-playlist"], url, cookies)
+        vtts = sorted(glob.glob(os.path.join(tmp, "sub.*")), key=lambda p: ("ai-zh" not in p, p))
+        vtts = [p for p in vtts if p.endswith((".vtt", ".srt"))]
         if not vtts:
             return {"available": False,
                     "reason": f"no auto subtitles (yt-dlp: {r.stderr.strip()[-120:] or r.stdout.strip()[-120:]})"}
@@ -91,7 +94,7 @@ def lane_subtitle(url, cookies):
 def download_audio(url, cookies):
     tmp = tempfile.mkdtemp(prefix="pi-hear-dl-")  # NOT auto-cleaned: model may want the artifact
     r = run_ytdlp(["-x", "-f", "bestaudio", "--no-playlist",
-                   "-o", os.path.join(tmp, "dl.%(ext)s")], cookies)
+                   "-o", os.path.join(tmp, "dl.%(ext)s")], url, cookies)
     files = sorted(glob.glob(os.path.join(tmp, "dl.*")))
     if not files:
         raise RuntimeError(f"download failed: {r.stderr.strip()[-160:]}")

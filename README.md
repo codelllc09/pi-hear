@@ -15,7 +15,7 @@ hear(source, mode="subtitle")    force subtitle lane (URL only)
 
 | Lane | Engine | Cost | Notes |
 |---|---|---|---|
-| subtitle | yt-dlp auto-subs | ~seconds (network) | B站 AI 字幕；质量未验，调用模型读 200 字再信 |
+| subtitle | yt-dlp subs | ~seconds (network) | B站需登录 cookies（ai-zh，普通字幕旗）；质量未验，调用模型读 200 字再信 |
 | asr (default engine) | SenseVoiceSmall + fsmn-vad stitch | RTF 0.04–0.07 @4 threads, CPU | zh/yue/en/ja/ko；自带标点 ITN；**无原生时间戳 → VAD 缝合**（已验证） |
 | asr (engine=whisper) | faster-whisper（按需装） | est RTF 0.1–0.3 | 原生时间戳；英文术语保留更好 |
 
@@ -43,7 +43,7 @@ Config `~/.pi/agent/pi-hear.json` (all keys optional):
   "gapMs": 800,
   "maxSegS": 30,
   "pythonPath": "~/.virtualenvs/main/bin/python",
-  "cookiesFile": null
+  "cookiesFile": "~/secrets/bilibili-cookies.txt"
 }
 ```
 
