@@ -1,0 +1,34 @@
+{
+	"name": "pi-hear",
+	"version": "0.1.0",
+	"description": "One hear() tool, two lanes (platform AI subtitles / local ASR); the calling model is the router. Fully local measurement: no VLM, no cloud ASR",
+	"license": "MIT",
+	"keywords": [
+		"pi",
+		"pi-extension",
+		"asr",
+		"transcription",
+		"sensevoice",
+		"whisper",
+		"subtitles"
+	],
+	"pi": {
+		"extensions": [
+			"./hear.ts"
+		]
+	},
+	"scripts": {
+		"test": "python3 tests/test-hear.py",
+		"check": "npx esbuild hear.ts --outfile=/dev/null"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*"
+	},
+	"devDependencies": {
+		"esbuild": "*",
+		"typebox": "*"
+	},
+	"engines": {
+		"node": ">=22"
+	}
+}

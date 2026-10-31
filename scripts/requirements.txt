@@ -1,0 +1,20 @@
+# pi-hear analyzer deps — install into the central venv:
+#   uv pip install -p ~/.virtualenvs/main/bin/python -r scripts/requirements.txt
+# Pin discipline mirrors pi-look: transcripts feed downstream correction;
+# an unpinned upgrade silently changes output and breaks comparability.
+
+funasr>=1.4.18,<1.5
+kaldi-native-fbank>=1.22,<2     # fbank backend; chosen over torchaudio (no torch-version coupling)
+soundfile>=0.14,<1
+
+# torch MUST come from the CPU index — the PyPI linux default bundles CUDA
+# (gigabytes of unused nvidia deps). This machine has no discrete GPU:
+#   uv pip install -p ~/.virtualenvs/main/bin/python "torch==2.9.1" --index-url https://download.pytorch.org/whl/cpu
+torch>=2.9,<2.10
+
+# Optional engine (mixed zh/en tech content; keeps loanwords better; models
+# small+medium already cached in ~/.cache/huggingface). Install on demand:
+#   uv pip install -p ~/.virtualenvs/main/bin/python faster-whisper
+# faster-whisper>=1.2,<2
+
+# System deps (not pip): ffmpeg/ffprobe, yt-dlp (~/.local/bin/yt-dlp)
