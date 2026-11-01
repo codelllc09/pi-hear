@@ -98,7 +98,7 @@ function runPython(script: string, args: string[], opts: RunOpts = {}): Promise<
 			if (opts.state && p.total > 0) opts.state.segTotal = p.total;
 			try {
 				opts.onUpdate?.({ content: [{ type: "text", text: p.text }], details: undefined });
-				if (opts.taskId) writeStatus(opts.taskId, p.done, p.total, p.text.replace(/^hear: /, ""));
+				if (opts.taskId) writeStatus(opts.taskId, p.done, p.total, p.text.replace(/^hear: /, ""), opts.state?.owner);
 			} catch { /* progress must never fail the run */ }
 		};
 		child.stdout.on("data", (d) => {
@@ -147,11 +147,10 @@ function fmtProgress(kind: string, vals: string[], engine?: string): { text: str
 // shows a live footer chip while long transcriptions run. Best-effort only.
 const STATUS_DIR = process.env.PI_TASK_STATUS_DIR ?? path.join(os.homedir(), ".pi", "agent", "status");
 
-function writeStatus(id: string, done: number, total: number, note: string): void {
+function writeStatus(id: string, done: number, total: number, note: string, owner?: string): void {
 	try {
 		fs.mkdirSync(STATUS_DIR, { recursive: true });
 		const p = path.join(STATUS_DIR, `${id}.json`);
-		const owner = process.env.PI_SESSION_ID;
 		fs.writeFileSync(`${p}.tmp`, JSON.stringify({ id, label: "hear", done, total, note, ...(owner ? { owner } : {}), updated: Math.floor(Date.now() / 1000) }));
 		fs.renameSync(`${p}.tmp`, p);
 	} catch { /* footer chip is optional — never fail the run */ }
@@ -176,7 +175,7 @@ interface RunOpts {
 	onUpdate?: (partial: { content: { type: "text"; text: string }[]; details: undefined }) => void; // may be missing (old hosts / nested calls)
 	engine?: string; // effective engine, for progress text
 	taskId?: string; // pi-taskwatcher status id; undefined → no status file
-	state?: { segTotal: number }; // mutable: last seen segment total (for the final done=total write)
+	state?: { segTotal: number; owner?: string }; // mutable: seg total + owning conversation id
 }
 
 async function analyze(cfg: HearConfig, source: string, mode: string, engine?: string, language?: string, opts: RunOpts = {}): Promise<HearResult> {
@@ -245,7 +244,7 @@ export default function (pi: ExtensionAPI) {
 			engine: Type.Optional(Type.String({ description: "ASR engine override: sensevoice | whisper" })),
 			language: Type.Optional(Type.String({ description: "auto | zh | en | ja | ko | yue" })),
 		}),
-		async execute(toolCallId: string, args: { source?: string; mode?: string; engine?: string; language?: string } = {}, signal?: AbortSignal, onUpdate?: RunOpts["onUpdate"]) {
+		async execute(toolCallId: string, args: { source?: string; mode?: string; engine?: string; language?: string } = {}, signal?: AbortSignal, onUpdate?: RunOpts["onUpdate"], ctx?: { sessionManager?: { getSessionId?: () => string } }) {
 			if (!args?.source) return { content: [{ type: "text", text: "hear: source (path or URL) required" }], isError: true };
 			const mode = ["auto", "asr", "subtitle"].includes(String(args.mode)) ? String(args.mode) : "auto";
 			const engine = ["sensevoice", "whisper"].includes(String(args.engine)) ? String(args.engine) : undefined;
@@ -254,13 +253,13 @@ export default function (pi: ExtensionAPI) {
 			// actually watches progress; short ids keep the filename sane
 			const short = (toolCallId ?? "").replace(/[^A-Za-z0-9._-]/g, "").slice(-8) || Math.random().toString(36).slice(2, 8);
 			const taskId = onUpdate ? `hear-${short}` : undefined;
-			const state = { segTotal: 0 };
+			const state = { segTotal: 0, owner: ctx?.sessionManager?.getSessionId?.() };
 			try {
 				const r = await analyze(cfg, String(args.source), mode, engine, args.language, { signal, onUpdate, taskId, state });
 				if (taskId) {
 					const total = state.segTotal || 1; // done=total → ✓ chip
 					const note = r.asr ? `engine=${r.asr.engine} rtf=${r.asr.rtf}` : (r.subtitle?.available ? "subtitles" : "done");
-					writeStatus(taskId, total, total, note);
+					writeStatus(taskId, total, total, note, state.owner);
 				}
 				return { content: [{ type: "text", text: fmt(r) }] };
 			} catch (e) {
