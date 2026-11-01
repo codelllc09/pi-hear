@@ -71,6 +71,29 @@ class TestAudioFormats(unittest.TestCase):
                 self.assertIn("review", a["text"].lower(), f"{ext}: content marker missing")
                 self.assertLess(a["rtf"], 0.5)
 
+class TestArtifact(unittest.TestCase):
+    """Long-content workaround: full transcript must land as a file next to
+    local sources; render is just a preview."""
+    def test_artifact_written_and_cleaned(self):
+        art = FIX + ".transcript.md"
+        if os.path.exists(art):
+            os.remove(art)
+        code, out, err = run(FIX, "--mode", "asr")
+        self.assertEqual(code, 0, err[:300])
+        r = json.loads(out)
+        self.assertEqual(r["artifact"], art, "artifact path expected for local source")
+        self.assertTrue(os.path.exists(art))
+        body = open(art, encoding="utf-8").read()
+        self.assertIn("review", body.lower())
+        self.assertIn("[00:0", body, "timestamped lines expected")
+        os.remove(art)  # keep fixtures dir clean
+
+    def test_url_never_writes_artifact_side_effect(self):
+        # write_artifact must skip URLs (no local path to sit beside)
+        code, out, _ = run("https://example.com/x.mp4", "--mode", "subtitle")
+        r = json.loads(out)
+        self.assertIsNone(r.get("artifact"))
+
 class TestErrors(unittest.TestCase):
     def test_whisper_not_installed_hint(self):
         code, out, _ = run(FIX, "--mode", "asr", "--engine", "whisper")

@@ -74,6 +74,7 @@ interface HearResult {
 	source?: string;
 	modeUsed?: string;
 	duration?: number | null;
+	artifact?: string | null;
 	subtitle?: { available: boolean; lang?: string; lines?: { start: number; end: number; text: string }[]; note?: string; reason?: string } | null;
 	asr?: { engine: string; language?: string; rtf: number | null; inferS: number; segments: { start: number; end: number; text: string }[]; text: string; duration?: number | null } | null;
 	error?: string | null;
@@ -96,6 +97,9 @@ async function analyze(cfg: HearConfig, source: string, mode: string, engine?: s
 const mmss = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
 const RENDER_LIMIT = 12_000; // chars of segment rendering; longer → artifact + preview
+const PREVIEW_SEGS = 50; // segments shown when a full artifact file exists
+
+const fmtSegment = (s: { start: number; end: number; text: string }) => `[${mmss(s.start)}-${mmss(s.end)}] ${s.text}`;
 
 function fmt(r: HearResult): string {
 	const parts: string[] = [];
@@ -110,10 +114,15 @@ function fmt(r: HearResult): string {
 	if (r.asr) {
 		const a = r.asr;
 		parts.push(`[asr] engine=${a.engine} lang=${a.language ?? "?"} rtf=${a.rtf} infer=${a.inferS}s`);
-		const lines = a.segments.map((s) => `[${mmss(s.start)}-${mmss(s.end)}] ${s.text}`);
-		const joined = lines.join("\n");
-		if (joined.length <= RENDER_LIMIT) parts.push(joined);
-		else parts.push(joined.slice(0, RENDER_LIMIT / 2) + `\n… [${a.segments.length} segments total, render truncated — full text lost beyond here; for long media prefer downloading locally and running batch scripts]`);
+		if (r.artifact) {
+			parts.push(`[artifact] full transcript (${a.segments.length} segments): ${r.artifact}`);
+			parts.push(...a.segments.slice(0, PREVIEW_SEGS).map(fmtSegment));
+			if (a.segments.length > PREVIEW_SEGS) parts.push(`… [preview of first ${PREVIEW_SEGS}; read the artifact file for the rest]`);
+		} else {
+			const joined = a.segments.map(fmtSegment).join("\n");
+			if (joined.length <= RENDER_LIMIT) parts.push(joined);
+			else parts.push(joined.slice(0, RENDER_LIMIT / 2) + `\n… [${a.segments.length} segments total, render truncated — download locally to get the .transcript.md artifact]`);
+		}
 	}
 	if (r.error) parts.push(`[error] ${r.error}`);
 	return parts.join("\n");

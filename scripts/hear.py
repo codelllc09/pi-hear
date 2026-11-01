@@ -178,6 +178,33 @@ def lane_asr(source, engine, language, threads, gap_ms, max_seg_s, whisper_model
         out["duration"] = round(dur, 1) if dur else None
         return out
 
+def mmss(s):
+    return f"{int(s)//60:02d}:{int(s)%60:02d}"
+
+def write_artifact(source, result):
+    """Long transcripts must survive the render limit: write the full thing
+    next to a LOCAL source as <source>.transcript.md; URLs stay render-only
+    (download locally first if you need the artifact)."""
+    result["artifact"] = None
+    if re.match(r"^https?://", source) or not os.path.isfile(source):
+        return
+    if result.get("asr"):
+        a = result["asr"]
+        segs, meta = a["segments"], f"engine={a['engine']} lang={a.get('language')} rtf={a['rtf']}"
+    elif (result.get("subtitle") or {}).get("available"):
+        segs = result["subtitle"]["lines"]
+        meta = "engine=platform-subs"
+    else:
+        return
+    if not segs:
+        return
+    path = source + ".transcript.md"
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(f"# transcript: {os.path.basename(source)}\n\n- {meta}\n- duration: {result.get('duration')}s | segments: {len(segs)}\n\n")
+        for s in segs:
+            f.write(f"[{mmss(s['start'])}-{mmss(s['end'])}] {s['text']}\n")
+    result["artifact"] = path
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("source")
@@ -213,6 +240,7 @@ def main():
         result["duration"] = result["asr"].get("duration")
     except Exception as e:
         result["error"] = str(e)[:400]
+    write_artifact(a.source, result)
     print(json.dumps(result, ensure_ascii=False))
 
 if __name__ == "__main__":
