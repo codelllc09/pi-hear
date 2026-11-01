@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write # OIDC trusted publishing — no npm token secret needed
 
 jobs:
   publish:
@@ -16,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24 # trusted publishing needs npm>=11.5.1 / node>=22.14
           registry-url: https://registry.npmjs.org
       - uses: actions/setup-python@v5
         with:
@@ -25,6 +26,5 @@ jobs:
       # prepublishOnly runs syntax checks (esbuild + py_compile) on this clean
       # machine. The full ASR suite needs a local venv + cached models and is
       # deliberately NOT part of publish — it gates the tagged commit locally.
+      # Auth is pure OIDC (trusted publisher configured on npmjs.com); no token.
       - run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
