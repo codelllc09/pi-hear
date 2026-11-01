@@ -48,6 +48,29 @@ class TestSubtitleLane(unittest.TestCase):
         self.assertFalse(r["subtitle"]["available"])
         self.assertIn("asr", r["subtitle"]["reason"])
 
+class TestAudioFormats(unittest.TestCase):
+    """Audio (not just video) sources flow the same pipe: ffmpeg feeds all
+    containers; verified matrix mp3/m4a/flac/ogg + direct-URL in
+    fixtures/MANIFEST.md (2026-11-01)."""
+    def _transcribe(self, ext, codec):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            f = os.path.join(td, f"clip.{ext}")
+            r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", FIX, "-t", "60"]
+                               + (codec and ["-c:a", codec] or []) + [f], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr[:200])
+            code, out, err = run(f, "--mode", "asr")
+            self.assertEqual(code, 0, err[:300])
+            return json.loads(out)["asr"]
+
+    def test_mp3_and_m4a(self):
+        for ext, codec in (("mp3", "libmp3lame"), ("m4a", "aac")):
+            with self.subTest(ext=ext):
+                a = self._transcribe(ext, codec)
+                self.assertGreaterEqual(len(a["segments"]), 1, f"{ext}: no segments")
+                self.assertIn("review", a["text"].lower(), f"{ext}: content marker missing")
+                self.assertLess(a["rtf"], 0.5)
+
 class TestErrors(unittest.TestCase):
     def test_whisper_not_installed_hint(self):
         code, out, _ = run(FIX, "--mode", "asr", "--engine", "whisper")

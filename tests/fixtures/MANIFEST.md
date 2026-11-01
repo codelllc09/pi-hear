@@ -34,6 +34,13 @@ SenseVoiceSmall (2026-11-01, VAD-stitch timestamps):
 上表特征不漂移（术语渲染方式、标点有无）。若 sensevoice 突然吐出原生
 sentence_info，可考虑退役 VAD 缝合——先在题库记录对比数据。
 
+## Audio-format matrix (2026-11-01, 60 s clip of this fixture)
+
+mp3 / m4a / flac / ogg / **direct mp3 URL** (http.server + yt-dlp generic
+extractor) all transcribe identically (RTF 0.05–0.08, same 'coded review'
+rendering). The original production input format was m4a. mp3+m4a are pinned in the test suite;
+the URL path needs a live server, judge it by spot-check.
+
 ## Negative results (do not re-try without new evidence)
 
 - SenseVoice via `merge_vad=True/False` 都不返回分段（字段只有 key/text）
