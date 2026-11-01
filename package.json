@@ -1,51 +1,51 @@
 {
-	"name": "pi-hear",
-	"version": "0.1.1",
-	"description": "One hear() tool, two lanes (platform AI subtitles / local ASR); the calling model is the router. Fully local measurement: no VLM, no cloud ASR",
-	"license": "MIT",
-	"keywords": [
-		"pi",
-		"pi-package",
-		"pi-extension",
-		"asr",
-		"transcription",
-		"sensevoice",
-		"whisper",
-		"subtitles"
-	],
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/codelllc09/pi-hear.git"
-	},
-	"homepage": "https://github.com/codelllc09/pi-hear#readme",
-	"bugs": "https://github.com/codelllc09/pi-hear/issues",
-	"author": "codelllc09",
-	"pi": {
-		"extensions": [
-			"./hear.ts"
-		]
-	},
-	"scripts": {
-		"test": "python3 tests/test-hear.py",
-		"check": "npx esbuild hear.ts --outfile=/dev/null && python3 -m py_compile scripts/hear.py tests/test-hear.py",
-		"prepublishOnly": "npm run check"
-	},
-	"peerDependencies": {
-		"@earendil-works/pi-coding-agent": "*"
-	},
-	"devDependencies": {
-		"esbuild": "*",
-		"typebox": "^1.4.3"
-	},
-	"engines": {
-		"node": ">=22"
-	},
-	"files": [
-		"hear.ts",
-		"scripts/",
-		"!scripts/__pycache__",
-		"docs/",
-		"README.md",
-		"LICENSE"
-	]
+  "name": "pi-hear",
+  "version": "0.1.2",
+  "description": "One hear() tool, two lanes (platform AI subtitles / local ASR); the calling model is the router. Fully local measurement: no VLM, no cloud ASR",
+  "license": "MIT",
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-extension",
+    "asr",
+    "transcription",
+    "sensevoice",
+    "whisper",
+    "subtitles"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codelllc09/pi-hear.git"
+  },
+  "homepage": "https://github.com/codelllc09/pi-hear#readme",
+  "bugs": "https://github.com/codelllc09/pi-hear/issues",
+  "author": "codelllc09",
+  "pi": {
+    "extensions": [
+      "./hear.ts"
+    ]
+  },
+  "scripts": {
+    "test": "python3 tests/test-hear.py",
+    "check": "npx esbuild hear.ts --outfile=/dev/null && python3 -m py_compile scripts/hear.py tests/test-hear.py",
+    "prepublishOnly": "npm run check"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "esbuild": "*",
+    "typebox": "^1.4.3"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "hear.ts",
+    "scripts/",
+    "!scripts/__pycache__",
+    "docs/",
+    "README.md",
+    "LICENSE"
+  ]
 }
