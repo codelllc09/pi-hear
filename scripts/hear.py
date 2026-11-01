@@ -102,10 +102,12 @@ def download_audio(url, cookies, proxy):
         raise RuntimeError(f"download failed: {r.stderr.strip()[-160:]}")
     return files[0]
 
-def vad_stitch(wav_path, threads, gap_ms, max_seg_s, language):
+def vad_stitch(wav_path, threads, gap_ms, max_seg_s, language, device):
     """SenseVoice has no native timestamps → fsmn-vad gives ms-level speech
     boundaries; force-split overlong chunks, merge short gaps, transcribe
-    slices in one batch, stitch back. Validated 2026-11-01 (RTF 0.054)."""
+    slices in one batch, stitch back. Validated 2026-11-01 (RTF 0.054).
+    VAD stays on CPU (streaming, tiny); ASR honors --device — benchmarked
+    vad=cpu+asr=cuda RTF 0.006 on RTX 4090 vs 0.055 on CPU."""
     import torch
     torch.set_num_threads(threads)
     import io as _io
@@ -116,7 +118,7 @@ def vad_stitch(wav_path, threads, gap_ms, max_seg_s, language):
     # this tool's contract is pure JSON on stdout, so swallow it.
     with _ctx.redirect_stdout(_io.StringIO()):
         vad = AutoModel(model="fsmn-vad", disable_update=True, device="cpu", log_level="ERROR")
-        asr = AutoModel(model="iic/SenseVoiceSmall", disable_update=True, device="cpu", log_level="ERROR")
+        asr = AutoModel(model="iic/SenseVoiceSmall", disable_update=True, device=device, log_level="ERROR")
     audio, sr = sf.read(wav_path, dtype="float32")
     if sr != 16000:
         raise RuntimeError(f"expected 16k wav, got {sr}")
@@ -148,7 +150,7 @@ def vad_stitch(wav_path, threads, gap_ms, max_seg_s, language):
             "inferS": round(infer, 1), "segments": segments,
             "text": "".join(s["text"] for s in segments)}
 
-def whisper_stitch(wav_path, model_size, language):
+def whisper_stitch(wav_path, model_size, language, device):
     try:
         from faster_whisper import WhisperModel
     except ImportError:
@@ -157,7 +159,7 @@ def whisper_stitch(wav_path, model_size, language):
                            "(models small/medium already in ~/.cache/huggingface)")
     import soundfile as sf
     dur = len(sf.read(wav_path, dtype="float32")[0]) / 16000
-    m = WhisperModel(model_size, device="cpu", compute_type="int8")
+    m = WhisperModel(model_size, device=device, compute_type="float16" if device.startswith("cuda") else "int8")
     t0 = time.time()
     gen, info = m.transcribe(wav_path, language=None if language == "auto" else language,
                              vad_filter=True, beam_size=5)
@@ -168,15 +170,15 @@ def whisper_stitch(wav_path, model_size, language):
             "inferS": round(infer, 1), "segments": segments,
             "text": " ".join(s["text"] for s in segments)}
 
-def lane_asr(source, engine, language, threads, gap_ms, max_seg_s, whisper_model, cookies, a_proxy):
+def lane_asr(source, engine, language, threads, gap_ms, max_seg_s, whisper_model, cookies, a_proxy, device):
     with tempfile.TemporaryDirectory(prefix="pi-hear-asr-") as tmp:
         media = source
         if re.match(r"^https?://", source):
             media = download_audio(source, cookies, a_proxy)
         wav = to_wav16k(media, tmp)
         dur = ffprobe_duration(wav)
-        out = whisper_stitch(wav, whisper_model, language) if engine == "whisper" \
-            else vad_stitch(wav, threads, gap_ms, max_seg_s, language)
+        out = whisper_stitch(wav, whisper_model, language, device) if engine == "whisper" \
+            else vad_stitch(wav, threads, gap_ms, max_seg_s, language, device)
         out["duration"] = round(dur, 1) if dur else None
         return out
 
@@ -217,6 +219,7 @@ def main():
     ap.add_argument("--gap-ms", type=int, default=800)
     ap.add_argument("--max-seg-s", type=int, default=30)
     ap.add_argument("--whisper-model", default="small")
+    ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     ap.add_argument("--cookies", default=None)
     ap.add_argument("--proxy", default=None)
     a = ap.parse_args()
@@ -239,7 +242,7 @@ def main():
                 return print(json.dumps(result, ensure_ascii=False))
         # asr (forced, or auto fallback)
         result["asr"] = lane_asr(a.source, a.engine, a.language, a.threads,
-                                 a.gap_ms, a.max_seg_s, a.whisper_model, a.cookies, a.proxy)
+                                 a.gap_ms, a.max_seg_s, a.whisper_model, a.cookies, a.proxy, a.device)
         result["duration"] = result["asr"].get("duration")
     except Exception as e:
         result["error"] = str(e)[:400]

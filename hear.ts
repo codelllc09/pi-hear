@@ -29,6 +29,7 @@ import { Type } from "typebox";
 interface HearConfig {
 	engine: string; // sensevoice | whisper
 	whisperModel: string; // faster-whisper size: small | medium ...
+	device: string; // cpu | cuda (local machine default: cpu)
 	threads: number; // CPU threads for torch — keep conservative (4)
 	language: string; // zh | en | ja | ko | yue | auto
 	gapMs: number; // VAD stitch: merge utterances with gaps below this
@@ -41,6 +42,7 @@ interface HearConfig {
 const DEFAULTS: HearConfig = {
 	engine: "sensevoice",
 	whisperModel: "small",
+	device: "cpu",
 	threads: 4,
 	language: "zh",
 	gapMs: 800,
@@ -89,6 +91,7 @@ async function analyze(cfg: HearConfig, source: string, mode: string, engine?: s
 		"--whisper-model", cfg.whisperModel];
 	if (cfg.cookiesFile) args.push("--cookies", expand(cfg.cookiesFile));
 	if (cfg.proxy) args.push("--proxy", cfg.proxy);
+	if (cfg.device && cfg.device !== "cpu") args.push("--device", cfg.device);
 	const out = await runPython(cfg.pythonPath, args);
 	// tolerate stray non-JSON lines (library banners): parse from first '{'
 	const i = out.indexOf("{");

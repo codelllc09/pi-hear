@@ -38,6 +38,7 @@ Config `~/.pi/agent/pi-hear.json` (all keys optional):
 {
   "engine": "sensevoice",
   "whisperModel": "small",
+  "device": "cpu",
   "threads": 4,
   "language": "zh",
   "gapMs": 800,
@@ -61,3 +62,12 @@ Config `~/.pi/agent/pi-hear.json` (all keys optional):
 - Visual frames are out of scope — `ffmpeg` sampling + `look` composes.
 
 Validated against a cross-engine fixture (see `tests/fixtures/MANIFEST.md`).
+
+## Remote GPU (gpu-host) recipe
+
+Validated 2026-11-01 (RTF 0.006 vs 0.055 CPU on RTX 4090; 1h audio → ~22s):
+`--device cuda` puts the ASR model on GPU, VAD stays on CPU (benchmarked split).
+Standard workhorse loop: rsync media to `gpu-host:~/staging/` →
+`ssh redacted-redacted 'cd ~/staging && ~/.virtualenvs/main/bin/python hear.py X --mode asr --device cuda'`
+→ rsync results (incl. `.transcript.md` artifact) back. No proxy needed —
+modelscope downloads are domestic-direct.
