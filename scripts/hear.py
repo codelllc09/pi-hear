@@ -38,10 +38,12 @@ def to_wav16k(src, tmpdir):
         raise RuntimeError(f"ffmpeg failed: {r.stderr.strip()[:200]}")
     return out
 
-def run_ytdlp(args, url, cookies=None):
+def run_ytdlp(args, url, cookies=None, proxy=None):
     cmd = [YTDLP, *args, url]
     if cookies:
         cmd += ["--cookies", cookies]
+    if proxy:
+        cmd += ["--proxy", proxy]
     return subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
 TS_RE = re.compile(r"(\d{2}):(\d{2}):(\d{2})[.,](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[.,](\d{3})")
@@ -72,13 +74,13 @@ def parse_vtt(path):
             out.append([s, e, t])
     return [{"start": round(s, 2), "end": round(e, 2), "text": t} for s, e, t in out]
 
-def lane_subtitle(url, cookies):
+def lane_subtitle(url, cookies, a_proxy):
     with tempfile.TemporaryDirectory(prefix="pi-hear-sub-") as tmp:
         # --write-subs AND --write-auto-subs: bilibili exposes its AI subs
         # as REGULAR subs (ai-zh, srt) while youtube-style platforms use auto-subs
         r = run_ytdlp(["--skip-download", "--write-subs", "--write-auto-subs",
                        "--sub-langs", "zh-Hans,ai-zh,zh-CN,zh,en",
-                       "-o", os.path.join(tmp, "sub.%(ext)s"), "--no-playlist"], url, cookies)
+                       "-o", os.path.join(tmp, "sub.%(ext)s"), "--no-playlist"], url, cookies, a_proxy)
         vtts = sorted(glob.glob(os.path.join(tmp, "sub.*")), key=lambda p: ("ai-zh" not in p, p))
         vtts = [p for p in vtts if p.endswith((".vtt", ".srt"))]
         if not vtts:
@@ -91,10 +93,10 @@ def lane_subtitle(url, cookies):
                 "note": "AI subtitles, quality UNVERIFIED — read the first ~200 chars and judge: "
                         "if missing/empty or clearly mismatched to the video topic, rerun mode='asr'"}
 
-def download_audio(url, cookies):
+def download_audio(url, cookies, proxy):
     tmp = tempfile.mkdtemp(prefix="pi-hear-dl-")  # NOT auto-cleaned: model may want the artifact
     r = run_ytdlp(["-x", "-f", "bestaudio", "--no-playlist",
-                   "-o", os.path.join(tmp, "dl.%(ext)s")], url, cookies)
+                   "-o", os.path.join(tmp, "dl.%(ext)s")], url, cookies, proxy)
     files = sorted(glob.glob(os.path.join(tmp, "dl.*")))
     if not files:
         raise RuntimeError(f"download failed: {r.stderr.strip()[-160:]}")
@@ -166,11 +168,11 @@ def whisper_stitch(wav_path, model_size, language):
             "inferS": round(infer, 1), "segments": segments,
             "text": " ".join(s["text"] for s in segments)}
 
-def lane_asr(source, engine, language, threads, gap_ms, max_seg_s, whisper_model, cookies):
+def lane_asr(source, engine, language, threads, gap_ms, max_seg_s, whisper_model, cookies, a_proxy):
     with tempfile.TemporaryDirectory(prefix="pi-hear-asr-") as tmp:
         media = source
         if re.match(r"^https?://", source):
-            media = download_audio(source, cookies)
+            media = download_audio(source, cookies, a_proxy)
         wav = to_wav16k(media, tmp)
         dur = ffprobe_duration(wav)
         out = whisper_stitch(wav, whisper_model, language) if engine == "whisper" \
@@ -216,6 +218,7 @@ def main():
     ap.add_argument("--max-seg-s", type=int, default=30)
     ap.add_argument("--whisper-model", default="small")
     ap.add_argument("--cookies", default=None)
+    ap.add_argument("--proxy", default=None)
     a = ap.parse_args()
 
     is_url = bool(re.match(r"^https?://", a.source))
@@ -224,7 +227,7 @@ def main():
     try:
         if a.mode == "subtitle" or (a.mode == "auto" and is_url):
             if is_url:
-                result["subtitle"] = lane_subtitle(a.source, a.cookies)
+                result["subtitle"] = lane_subtitle(a.source, a.cookies, a.proxy)
             else:
                 result["subtitle"] = {"available": False,
                                       "reason": "local source has no subtitle track — use mode='asr'"}
@@ -236,7 +239,7 @@ def main():
                 return print(json.dumps(result, ensure_ascii=False))
         # asr (forced, or auto fallback)
         result["asr"] = lane_asr(a.source, a.engine, a.language, a.threads,
-                                 a.gap_ms, a.max_seg_s, a.whisper_model, a.cookies)
+                                 a.gap_ms, a.max_seg_s, a.whisper_model, a.cookies, a.proxy)
         result["duration"] = result["asr"].get("duration")
     except Exception as e:
         result["error"] = str(e)[:400]

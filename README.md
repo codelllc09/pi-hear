@@ -43,7 +43,8 @@ Config `~/.pi/agent/pi-hear.json` (all keys optional):
   "gapMs": 800,
   "maxSegS": 30,
   "pythonPath": "~/.virtualenvs/main/bin/python",
-  "cookiesFile": "~/secrets/bilibili-cookies.txt"
+  "cookiesFile": "~/secrets/bilibili-cookies.txt",
+  "proxy": "http://127.0.0.1:7897"
 }
 ```
 

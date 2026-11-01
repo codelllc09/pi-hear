@@ -35,6 +35,7 @@ interface HearConfig {
 	maxSegS: number; // VAD stitch: force-split segments longer than this
 	pythonPath: string;
 	cookiesFile?: string; // yt-dlp cookies for member-only sources
+	proxy?: string; // yt-dlp proxy, e.g. http://127.0.0.1:7897 — needed for youtube
 }
 
 const DEFAULTS: HearConfig = {
@@ -87,6 +88,7 @@ async function analyze(cfg: HearConfig, source: string, mode: string, engine?: s
 		"--gap-ms", String(cfg.gapMs), "--max-seg-s", String(cfg.maxSegS),
 		"--whisper-model", cfg.whisperModel];
 	if (cfg.cookiesFile) args.push("--cookies", expand(cfg.cookiesFile));
+	if (cfg.proxy) args.push("--proxy", cfg.proxy);
 	const out = await runPython(cfg.pythonPath, args);
 	// tolerate stray non-JSON lines (library banners): parse from first '{'
 	const i = out.indexOf("{");
