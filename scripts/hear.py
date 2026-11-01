@@ -151,7 +151,9 @@ def download_audio(url, cookies, proxy):
                    "-o", os.path.join(tmp, "dl.%(ext)s")], url, cookies, proxy)
     files = sorted(glob.glob(os.path.join(tmp, "dl.*")))
     if not files:
-        raise RuntimeError(f"download failed: {r.stderr.strip()[-160:]}")
+        # progress mode merges yt-dlp stderr into stdout — fall back to its tail
+        tail = (r.stderr or "").strip()[-160:] or (r.stdout or "").strip()[-160:]
+        raise RuntimeError(f"download failed: {tail}")
     return files[0]
 
 def asr_transcribe(asr, slices, language):
@@ -337,7 +339,11 @@ def main():
         result["duration"] = result["asr"].get("duration")
     except Exception as e:
         result["error"] = str(e)[:400]
-    write_artifact(a.source, result)
+    try:
+        write_artifact(a.source, result)
+    except Exception as e:  # artifact is a bonus — never lose the transcript to it
+        result["artifact"] = None
+        print(f"artifact write failed: {str(e)[:200]}", file=sys.stderr)
     print(json.dumps(result, ensure_ascii=False))
 
 if __name__ == "__main__":

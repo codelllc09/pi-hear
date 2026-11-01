@@ -112,15 +112,18 @@ function runPython(script: string, args: string[], opts: RunOpts = {}): Promise<
 			}
 		});
 		child.stderr.on("data", (d) => (err += d));
-		child.on("close", (code, sig) => {
+		const cleanup = () => {
 			if (killTimer) clearTimeout(killTimer);
 			opts.signal?.removeEventListener("abort", onAbort);
+		};
+		child.on("close", (code, sig) => {
+			cleanup();
 			if (killed || opts.signal?.aborted) return reject(new Error("aborted by user"));
 			if (sig) return reject(new Error(`analyzer killed by ${sig}`));
 			if (code === 0) return resolve(out);
 			reject(new Error(`analyzer exit ${code}: ${err.slice(0, 400)}`));
 		});
-		child.on("error", reject);
+		child.on("error", (e) => { cleanup(); reject(e); });
 	});
 }
 

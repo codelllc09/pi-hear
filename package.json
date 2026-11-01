@@ -1,6 +1,6 @@
 {
 	"name": "pi-hear",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "One hear() tool, two lanes (platform AI subtitles / local ASR); the calling model is the router. Fully local measurement: no VLM, no cloud ASR",
 	"license": "MIT",
 	"keywords": [
