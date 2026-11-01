@@ -15,10 +15,36 @@ Lanes:
 
 Output: one JSON object on stdout. Transcripts are verbatim — correction
 is downstream work, never this tool's job.
+
+Progress (--progress flag, used by the TS host): machine-parsable lines
+`PROGRESS\t<kind>\t<vals...>` on stdout before the final JSON — kinds:
+  stage     text stage change (loading models / vad / downloading audio ...)
+  download  percent, e.g. `PROGRESS\tdownload\t42.1%`
+  seg       done/total segments (`total` 0/absent = unknown, e.g. whisper)
+Throttled to >=2s (stages and force bypass). Stdout stays pure JSON without
+the flag, so CLI/tests see zero change.
 """
-import argparse, glob, json, os, re, shutil, subprocess, sys, tempfile, time
+import argparse, glob, json, os, re, shutil, signal, subprocess, sys, tempfile, threading, time
 
 YTDLP = shutil.which("yt-dlp") or os.path.expanduser("~/.local/bin/yt-dlp")
+
+PROGRESS_ON = False  # set by --progress; without it stdout is pure JSON
+_last_prog = [0.0]
+
+def progress(kind, *vals, force=False):
+    if not PROGRESS_ON:
+        return
+    now = time.time()
+    if kind != "stage" and not force and now - _last_prog[0] < 2.0:
+        return
+    _last_prog[0] = now
+    print("PROGRESS\t" + "\t".join([kind, *map(str, vals)]), flush=True)
+
+def _sigterm(signum, frame):
+    # host aborts by SIGTERM to the whole process group: unwind as an exception
+    # so TemporaryDirectory cleans up and subprocess.run kills its child,
+    # instead of the default hard exit that leaks both
+    sys.exit(143)
 
 def ffprobe_duration(path):
     r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -38,13 +64,37 @@ def to_wav16k(src, tmpdir):
         raise RuntimeError(f"ffmpeg failed: {r.stderr.strip()[:200]}")
     return out
 
-def run_ytdlp(args, url, cookies=None, proxy=None):
+def _ytdlp_cmd(args, url, cookies, proxy):
     cmd = [YTDLP, *args, url]
     if cookies:
         cmd += ["--cookies", cookies]
     if proxy:
         cmd += ["--proxy", proxy]
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    return cmd
+
+YTDLP_PCT = re.compile(r"\[download\]\s+(\d{1,3}(?:\.\d+)?)%")
+
+def run_ytdlp(args, url, cookies=None, proxy=None):
+    if not PROGRESS_ON:  # original path, byte-for-byte behavior
+        return subprocess.run(_ytdlp_cmd(args, url, cookies, proxy),
+                              capture_output=True, text=True, timeout=300)
+    # progress path: --newline makes every update a fresh parseable line; scan
+    # stdout live for download %, merge stderr into it (small, no pipe deadlock),
+    # watchdog kill keeps the old 300s timeout
+    p = subprocess.Popen(_ytdlp_cmd(["--newline", *args], url, cookies, proxy),
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    watchdog = threading.Timer(300, p.kill)
+    watchdog.daemon = True
+    watchdog.start()
+    out = []
+    for line in p.stdout:
+        out.append(line)
+        m = YTDLP_PCT.search(line)
+        if m:
+            progress("download", f"{m.group(1)}%")
+    p.wait()
+    watchdog.cancel()
+    return subprocess.CompletedProcess(p.args, p.returncode, stdout="".join(out), stderr="")
 
 TS_RE = re.compile(r"(\d{2}):(\d{2}):(\d{2})[.,](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[.,](\d{3})")
 
@@ -75,6 +125,7 @@ def parse_vtt(path):
     return [{"start": round(s, 2), "end": round(e, 2), "text": t} for s, e, t in out]
 
 def lane_subtitle(url, cookies, a_proxy):
+    progress("stage", "fetching subtitles")
     with tempfile.TemporaryDirectory(prefix="pi-hear-sub-") as tmp:
         # --write-subs AND --write-auto-subs: bilibili exposes its AI subs
         # as REGULAR subs (ai-zh, srt) while youtube-style platforms use auto-subs
@@ -94,6 +145,7 @@ def lane_subtitle(url, cookies, a_proxy):
                         "if missing/empty or clearly mismatched to the video topic, rerun mode='asr'"}
 
 def download_audio(url, cookies, proxy):
+    progress("stage", "downloading audio")
     tmp = tempfile.mkdtemp(prefix="pi-hear-dl-")  # NOT auto-cleaned: model may want the artifact
     r = run_ytdlp(["-x", "-f", "bestaudio", "--no-playlist",
                    "-o", os.path.join(tmp, "dl.%(ext)s")], url, cookies, proxy)
@@ -101,6 +153,32 @@ def download_audio(url, cookies, proxy):
     if not files:
         raise RuntimeError(f"download failed: {r.stderr.strip()[-160:]}")
     return files[0]
+
+def asr_transcribe(asr, slices, language):
+    """One batch generate — or, with progress on, chunked batches grouped by
+    ~batch_size_s of audio (same packing funasr does internally; slices are
+    independent so per-slice output is identical either way), reporting
+    `seg done/total` after each chunk."""
+    if not (PROGRESS_ON and len(slices) > 1):
+        return asr.generate(input=slices, cache={}, language=language, use_itn=True,
+                            batch_size_s=300, disable_pbar=True)
+    groups, cur, cur_s = [], [], 0.0
+    for sl in slices:
+        dur = len(sl) / 16000
+        if cur and cur_s + dur > 300:
+            groups.append(cur)
+            cur, cur_s = [], 0.0
+        cur.append(sl)
+        cur_s += dur
+    if cur:
+        groups.append(cur)
+    res, done = [], 0
+    for g in groups:
+        res.extend(asr.generate(input=g, cache={}, language=language, use_itn=True,
+                                batch_size_s=300, disable_pbar=True))
+        done += len(g)
+        progress("seg", done, len(slices), force=(done == len(slices)))
+    return res
 
 def vad_stitch(wav_path, threads, gap_ms, max_seg_s, language, device):
     """SenseVoice has no native timestamps → fsmn-vad gives ms-level speech
@@ -116,6 +194,7 @@ def vad_stitch(wav_path, threads, gap_ms, max_seg_s, language, device):
     from funasr import AutoModel
     # funasr AutoModel prints its version banner to STDOUT on every init —
     # this tool's contract is pure JSON on stdout, so swallow it.
+    progress("stage", "loading models")
     with _ctx.redirect_stdout(_io.StringIO()):
         vad = AutoModel(model="fsmn-vad", disable_update=True, device="cpu", log_level="ERROR")
         asr = AutoModel(model="iic/SenseVoiceSmall", disable_update=True, device=device, log_level="ERROR")
@@ -123,6 +202,7 @@ def vad_stitch(wav_path, threads, gap_ms, max_seg_s, language, device):
     if sr != 16000:
         raise RuntimeError(f"expected 16k wav, got {sr}")
     dur = len(audio) / sr
+    progress("stage", "vad")
     chunks = vad.generate(input=audio, cache={}, disable_pbar=True)[0]["value"]  # ms pairs
     # force-split chunks longer than max_seg_s
     split = []
@@ -140,8 +220,7 @@ def vad_stitch(wav_path, threads, gap_ms, max_seg_s, language, device):
             utts.append([s, e])
     slices = [audio[int(s * sr):int(e * sr)] for s, e in utts]
     t0 = time.time()
-    res = asr.generate(input=slices, cache={}, language=language, use_itn=True,
-                       batch_size_s=300, disable_pbar=True)
+    res = asr_transcribe(asr, slices, language)
     infer = time.time() - t0
     strip = lambda t: re.sub(r"<\|[^|]+\|>", "", t or "").strip()
     segments = [{"start": round(s, 2), "end": round(e, 2), "text": strip(r.get("text"))}
@@ -159,12 +238,17 @@ def whisper_stitch(wav_path, model_size, language, device):
                            "(models small/medium already in ~/.cache/huggingface)")
     import soundfile as sf
     dur = len(sf.read(wav_path, dtype="float32")[0]) / 16000
+    progress("stage", "loading models")
     m = WhisperModel(model_size, device=device, compute_type="float16" if device.startswith("cuda") else "int8")
     t0 = time.time()
     gen, info = m.transcribe(wav_path, language=None if language == "auto" else language,
                              vad_filter=True, beam_size=5)
-    segments = [{"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text.strip()}
-                for s in gen if s.text.strip()]
+    segments, n = [], 0
+    for s in gen:  # lazy generator: iteration IS the transcription
+        n += 1
+        progress("seg", n)  # total unknown until iteration ends
+        if s.text.strip():
+            segments.append({"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text.strip()})
     infer = time.time() - t0
     return {"engine": "whisper", "language": info.language, "rtf": round(infer / dur, 3) if dur else None,
             "inferS": round(infer, 1), "segments": segments,
@@ -175,6 +259,7 @@ def lane_asr(source, engine, language, threads, gap_ms, max_seg_s, whisper_model
         media = source
         if re.match(r"^https?://", source):
             media = download_audio(source, cookies, a_proxy)
+        progress("stage", "extracting audio")
         wav = to_wav16k(media, tmp)
         dur = ffprobe_duration(wav)
         out = whisper_stitch(wav, whisper_model, language, device) if engine == "whisper" \
@@ -222,7 +307,13 @@ def main():
     ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     ap.add_argument("--cookies", default=None)
     ap.add_argument("--proxy", default=None)
+    ap.add_argument("--progress", action="store_true",
+                    help="emit PROGRESS\t... lines on stdout before the JSON (for the TS host)")
     a = ap.parse_args()
+
+    global PROGRESS_ON
+    PROGRESS_ON = a.progress
+    signal.signal(signal.SIGTERM, _sigterm)
 
     is_url = bool(re.match(r"^https?://", a.source))
     result = {"source": a.source, "modeUsed": a.mode, "duration": None,

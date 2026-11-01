@@ -13,6 +13,11 @@
  * all cores busy. The tool description tells the model to warn the user
  * before long media.
  *
+ * Whitebox execution: execute() takes the host's (signal, onUpdate) — abort
+ * kills the whole python process group (SIGTERM→cleanup, SIGKILL escalation);
+ * PROGRESS lines from the analyzer stream to onUpdate (throttled python-side)
+ * and to a pi-taskwatcher footer chip (~/.pi/agent/status/hear-<id>.json).
+ *
  * Config: <agent-dir>/pi-hear.json
  *   { "engine": "sensevoice", "whisperModel": "small", "threads": 4,
  *     "language": "zh", "gapMs": 800, "maxSegS": 30,
@@ -62,15 +67,95 @@ function loadConfig(): HearConfig {
 	}
 }
 
-function runPython(script: string, args: string[]): Promise<string> {
+function runPython(script: string, args: string[], opts: RunOpts = {}): Promise<string> {
 	return new Promise((resolve, reject) => {
-		const child = spawn(expand(script), args, { stdio: ["ignore", "pipe", "pipe"] });
-		let out = "", err = "";
-		child.stdout.on("data", (d) => (out += d));
+		// detached → own process group: abort kills the whole tree (python +
+		// its yt-dlp/ffmpeg children) with one group signal
+		const child = spawn(expand(script), args, { stdio: ["ignore", "pipe", "pipe"], detached: true });
+		let out = "", err = "", lineBuf = "";
+		let killed = false, killTimer: NodeJS.Timeout | undefined;
+
+		const killTree = (sig: "SIGTERM" | "SIGKILL") => {
+			try { if (child.pid) process.kill(-child.pid, sig); } catch { /* group already gone */ }
+			try { child.kill(sig); } catch { /* already dead */ }
+		};
+		const onAbort = () => {
+			killed = true;
+			killTree("SIGTERM"); // python unwinds → tmpdirs cleaned, its children killed
+			// torch C calls can hold the interpreter through SIGTERM — escalate
+			killTimer = setTimeout(() => killTree("SIGKILL"), 2000);
+			killTimer.unref?.();
+		};
+		if (opts.signal) {
+			if (opts.signal.aborted) onAbort();
+			else opts.signal.addEventListener("abort", onAbort, { once: true });
+		}
+
+		const emit = (line: string) => {
+			const [kind, ...vals] = line.split("\t").slice(1); // drop leading "PROGRESS"
+			const p = fmtProgress(kind, vals, opts.engine);
+			if (!p) return;
+			if (opts.state && p.total > 0) opts.state.segTotal = p.total;
+			try {
+				opts.onUpdate?.({ content: [{ type: "text", text: p.text }], details: undefined });
+				if (opts.taskId) writeStatus(opts.taskId, p.done, p.total, p.text.replace(/^hear: /, ""));
+			} catch { /* progress must never fail the run */ }
+		};
+		child.stdout.on("data", (d) => {
+			out += d;
+			lineBuf += d;
+			let nl: number;
+			while ((nl = lineBuf.indexOf("\n")) >= 0) {
+				const line = lineBuf.slice(0, nl);
+				lineBuf = lineBuf.slice(nl + 1);
+				if (line.startsWith("PROGRESS\t")) emit(line);
+			}
+		});
 		child.stderr.on("data", (d) => (err += d));
-		child.on("close", (code) => (code === 0 ? resolve(out) : reject(new Error(`analyzer exit ${code}: ${err.slice(0, 400)}`))));
+		child.on("close", (code, sig) => {
+			if (killTimer) clearTimeout(killTimer);
+			opts.signal?.removeEventListener("abort", onAbort);
+			if (killed || opts.signal?.aborted) return reject(new Error("aborted by user"));
+			if (sig) return reject(new Error(`analyzer killed by ${sig}`));
+			if (code === 0) return resolve(out);
+			reject(new Error(`analyzer exit ${code}: ${err.slice(0, 400)}`));
+		});
 		child.on("error", reject);
 	});
+}
+
+// python PROGRESS lines → user-visible text + pi-taskwatcher numbers.
+// Throttling is python-side (≥2s); TS just forwards what arrives.
+function fmtProgress(kind: string, vals: string[], engine?: string): { text: string; done: number; total: number } | null {
+	if (kind === "stage") return { text: `hear: ${vals[0] ?? "working"} …`, done: 0, total: 0 };
+	if (kind === "download") return { text: `hear: downloading audio … ${vals[0] ?? ""}`, done: 0, total: 0 };
+	if (kind === "seg") {
+		const done = Number(vals[0]) || 0, total = Number(vals[1]) || 0;
+		const tail = engine ? ` · engine=${engine}` : "";
+		const text = total > 0
+			? `hear: transcribing ${done}/${total} segments (~${Math.min(100, Math.round((done / total) * 100))}%)${tail}`
+			: `hear: transcribing ${done} segments${tail}`; // whisper: total unknown until done
+		return { text, done, total };
+	}
+	return null;
+}
+
+// pi-taskwatcher status file (~/.pi/agent/status/<id>.json, atomic tmp+rename):
+// shows a live footer chip while long transcriptions run. Best-effort only.
+const STATUS_DIR = process.env.PI_TASK_STATUS_DIR ?? path.join(os.homedir(), ".pi", "agent", "status");
+
+function writeStatus(id: string, done: number, total: number, note: string): void {
+	try {
+		fs.mkdirSync(STATUS_DIR, { recursive: true });
+		const p = path.join(STATUS_DIR, `${id}.json`);
+		const owner = process.env.PI_SESSION_ID;
+		fs.writeFileSync(`${p}.tmp`, JSON.stringify({ id, label: "hear", done, total, note, ...(owner ? { owner } : {}), updated: Math.floor(Date.now() / 1000) }));
+		fs.renameSync(`${p}.tmp`, p);
+	} catch { /* footer chip is optional — never fail the run */ }
+}
+
+function removeStatus(id: string): void {
+	try { fs.rmSync(path.join(STATUS_DIR, `${id}.json`), { force: true }); } catch { /* best-effort */ }
 }
 
 interface HearResult {
@@ -83,7 +168,15 @@ interface HearResult {
 	error?: string | null;
 }
 
-async function analyze(cfg: HearConfig, source: string, mode: string, engine?: string, language?: string): Promise<HearResult> {
+interface RunOpts {
+	signal?: AbortSignal; // host abort → kill the whole python process group
+	onUpdate?: (partial: { content: { type: "text"; text: string }[]; details: undefined }) => void; // may be missing (old hosts / nested calls)
+	engine?: string; // effective engine, for progress text
+	taskId?: string; // pi-taskwatcher status id; undefined → no status file
+	state?: { segTotal: number }; // mutable: last seen segment total (for the final done=total write)
+}
+
+async function analyze(cfg: HearConfig, source: string, mode: string, engine?: string, language?: string, opts: RunOpts = {}): Promise<HearResult> {
 	const script = path.join(import.meta.dirname, "scripts", "hear.py");
 	const args = [script, source, "--mode", mode, "--engine", engine ?? cfg.engine,
 		"--language", language ?? cfg.language, "--threads", String(cfg.threads),
@@ -92,11 +185,13 @@ async function analyze(cfg: HearConfig, source: string, mode: string, engine?: s
 	if (cfg.cookiesFile) args.push("--cookies", expand(cfg.cookiesFile));
 	if (cfg.proxy) args.push("--proxy", cfg.proxy);
 	if (cfg.device && cfg.device !== "cpu") args.push("--device", cfg.device);
-	const out = await runPython(cfg.pythonPath, args);
-	// tolerate stray non-JSON lines (library banners): parse from first '{'
-	const i = out.indexOf("{");
-	if (i < 0) throw new Error(`analyzer produced no JSON: ${out.slice(0, 200)}`);
-	return JSON.parse(out.slice(i)) as HearResult;
+	if (opts.onUpdate) args.push("--progress"); // else stdout stays pure JSON
+	const out = await runPython(cfg.pythonPath, args, { ...opts, engine: engine ?? cfg.engine });
+	// tolerate stray non-JSON lines (library banners / PROGRESS): parse from first '{'
+	const clean = out.split("\n").filter((l) => !l.startsWith("PROGRESS\t")).join("\n");
+	const i = clean.indexOf("{");
+	if (i < 0) throw new Error(`analyzer produced no JSON: ${clean.slice(0, 200)}`);
+	return JSON.parse(clean.slice(i)) as HearResult;
 }
 
 const mmss = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -147,15 +242,29 @@ export default function (pi: ExtensionAPI) {
 			engine: Type.Optional(Type.String({ description: "ASR engine override: sensevoice | whisper" })),
 			language: Type.Optional(Type.String({ description: "auto | zh | en | ja | ko | yue" })),
 		}),
-		async execute(_toolCallId: string, args: { source?: string; mode?: string; engine?: string; language?: string } = {}) {
+		async execute(toolCallId: string, args: { source?: string; mode?: string; engine?: string; language?: string } = {}, signal?: AbortSignal, onUpdate?: RunOpts["onUpdate"]) {
 			if (!args?.source) return { content: [{ type: "text", text: "hear: source (path or URL) required" }], isError: true };
 			const mode = ["auto", "asr", "subtitle"].includes(String(args.mode)) ? String(args.mode) : "auto";
 			const engine = ["sensevoice", "whisper"].includes(String(args.engine)) ? String(args.engine) : undefined;
+			if (signal?.aborted) return { content: [{ type: "text", text: "hear: aborted by user" }], isError: true };
+			// footer progress chip (pi-taskwatcher convention) — only when a host
+			// actually watches progress; short ids keep the filename sane
+			const short = (toolCallId ?? "").replace(/[^A-Za-z0-9._-]/g, "").slice(-8) || Math.random().toString(36).slice(2, 8);
+			const taskId = onUpdate ? `hear-${short}` : undefined;
+			const state = { segTotal: 0 };
 			try {
-				const r = await analyze(cfg, String(args.source), mode, engine, args.language);
+				const r = await analyze(cfg, String(args.source), mode, engine, args.language, { signal, onUpdate, taskId, state });
+				if (taskId) {
+					const total = state.segTotal || 1; // done=total → ✓ chip
+					const note = r.asr ? `engine=${r.asr.engine} rtf=${r.asr.rtf}` : (r.subtitle?.available ? "subtitles" : "done");
+					writeStatus(taskId, total, total, note);
+				}
 				return { content: [{ type: "text", text: fmt(r) }] };
 			} catch (e) {
-				return { content: [{ type: "text", text: `hear failed: ${String(e instanceof Error ? e.message : e)}` }], isError: true };
+				if (taskId) removeStatus(taskId);
+				const msg = e instanceof Error ? e.message : String(e);
+				const text = signal?.aborted || msg.includes("aborted") ? "hear: aborted by user" : `hear failed: ${msg}`;
+				return { content: [{ type: "text", text }], isError: true };
 			}
 		},
 	});
