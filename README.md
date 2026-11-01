@@ -63,11 +63,13 @@ Config `~/.pi/agent/pi-hear.json` (all keys optional):
 
 Validated against a cross-engine fixture (see `tests/fixtures/MANIFEST.md`).
 
-## Remote GPU (gpu-host) recipe
+## Remote GPU recipe (any CUDA host)
 
-Validated 2026-11-01 (RTF 0.006 vs 0.055 CPU on RTX 4090; 1h audio → ~22s):
-`--device cuda` puts the ASR model on GPU, VAD stays on CPU (benchmarked split).
-Standard workhorse loop: rsync media to `gpu-host:~/staging/` →
-`ssh redacted-redacted 'cd ~/staging && ~/.virtualenvs/main/bin/python hear.py X --mode asr --device cuda'`
-→ rsync results (incl. `.transcript.md` artifact) back. No proxy needed —
-modelscope downloads are domestic-direct.
+`--device cuda` puts the ASR model on GPU, VAD stays on CPU (benchmarked split;
+RTF 0.006 vs 0.055 CPU on an RTX 4090, 2026-11-01 — 1h audio ≈ 22s). The
+workhorse loop is host-agnostic: pick a staging dir on any CUDA machine with
+this venv layout, then rsync media over → run
+`<host-python> hear.py <media> --mode asr --device cuda` (in tmux for long
+batches) → rsync results (incl. the `.transcript.md` artifact) back. Model
+downloads come from modelscope (domestic-direct, no proxy needed). Which
+hosts exist is your ssh config's business, not this file's.
