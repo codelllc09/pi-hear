@@ -44,6 +44,7 @@
 		"hear.ts",
 		"scripts/",
 		"!scripts/__pycache__",
+		"docs/",
 		"README.md",
 		"LICENSE"
 	]
