@@ -2,7 +2,7 @@
 
 - **Provenance**: first 90 s of the audio track of a Bilibili "CodeReview" talk
   video (zh speaker, heavy English loanwords: CodeReview, parser, compile,
-  type variable). .
+  type variable).
 - **Format**: 16 kHz mono wav, 90.0 s.
 
 ## Cross-engine reference (same content)
@@ -38,8 +38,9 @@ sentence_info，可考虑退役 VAD 缝合——先在题库记录对比数据�
 
 mp3 / m4a / flac / ogg / **direct mp3 URL** (http.server + yt-dlp generic
 extractor) all transcribe identically (RTF 0.05–0.08, same 'coded review'
-rendering). The original production input format was m4a. mp3+m4a are pinned in the test suite;
-the URL path needs a live server, judge it by spot-check.
+rendering). The original production input format was m4a; mp3+m4a are
+pinned in the test suite; the URL path needs a live server, judge it by
+spot-check.
 
 ## Negative results (do not re-try without new evidence)
 

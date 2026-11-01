@@ -3,7 +3,7 @@
 # pi-hear
 
 One `hear()` tool, two lanes — the calling model is the router. Fully local:
-no VLM, no cloud ASR. 
+no VLM, no cloud ASR.
 
 ```
 hear(source)                     source = URL → AI subtitles first (instant,

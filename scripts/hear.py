@@ -3,7 +3,7 @@
 
 Lanes:
   subtitle  yt-dlp platform AI subtitles (URL sources; instant; quality
-            UNVERIFIED — the calling model reads a sample and judges,
+            UNVERIFIED — the calling model reads a sample and judges.
             The tool fetches, it never judges.)
   asr       ffmpeg → 16k mono wav → engine:
               sensevoice  iic/SenseVoiceSmall + fsmn-vad stitch

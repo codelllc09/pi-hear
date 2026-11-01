@@ -78,8 +78,7 @@ pi -e git:github.com/codelllc09/pi-hear
   并给 50 段预览。批量/生产任务请走批量流水线，别用这个交互工具。
 - 画面抽取不在范围内——`ffmpeg` 抽帧 + `look` 组合去做。
 
-跨引擎 fixture 验证
-（见 `tests/fixtures/MANIFEST.md`）。
+跨引擎 fixture 验证（见 `tests/fixtures/MANIFEST.md`）。
 
 ## 许可证
 
