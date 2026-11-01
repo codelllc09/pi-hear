@@ -38,7 +38,7 @@ Config `~/.pi/agent/pi-hear.json` (all keys optional):
 {
   "engine": "sensevoice",
   "whisperModel": "small",
-  "device": "cpu",
+  "device": "cpu",          // "cuda" puts ASR on GPU; VAD stays CPU (benchmarked split)
   "threads": 4,
   "language": "zh",
   "gapMs": 800,
@@ -63,13 +63,3 @@ Config `~/.pi/agent/pi-hear.json` (all keys optional):
 
 Validated against a cross-engine fixture (see `tests/fixtures/MANIFEST.md`).
 
-## Remote GPU recipe (any CUDA host)
-
-`--device cuda` puts the ASR model on GPU, VAD stays on CPU (benchmarked split;
-RTF 0.006 vs 0.055 CPU on an RTX 4090, 2026-11-01 — 1h audio ≈ 22s). The
-workhorse loop is host-agnostic: pick a staging dir on any CUDA machine with
-this venv layout, then rsync media over → run
-`<host-python> hear.py <media> --mode asr --device cuda` (in tmux for long
-batches) → rsync results (incl. the `.transcript.md` artifact) back. Model
-downloads come from modelscope (domestic-direct, no proxy needed). Which
-hosts exist is your ssh config's business, not this file's.
