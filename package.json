@@ -5,6 +5,7 @@
 	"license": "MIT",
 	"keywords": [
 		"pi",
+		"pi-package",
 		"pi-extension",
 		"asr",
 		"transcription",
@@ -12,6 +13,13 @@
 		"whisper",
 		"subtitles"
 	],
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/codelllc09/pi-hear.git"
+	},
+	"homepage": "https://github.com/codelllc09/pi-hear#readme",
+	"bugs": "https://github.com/codelllc09/pi-hear/issues",
+	"author": "codelllc09",
 	"pi": {
 		"extensions": [
 			"./hear.ts"
@@ -19,7 +27,8 @@
 	},
 	"scripts": {
 		"test": "python3 tests/test-hear.py",
-		"check": "npx esbuild hear.ts --outfile=/dev/null"
+		"check": "npx esbuild hear.ts --outfile=/dev/null && python3 -m py_compile scripts/hear.py tests/test-hear.py",
+		"prepublishOnly": "npm run check"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": "*"
@@ -30,5 +39,12 @@
 	},
 	"engines": {
 		"node": ">=22"
-	}
+	},
+	"files": [
+		"hear.ts",
+		"scripts/",
+		"!scripts/__pycache__",
+		"README.md",
+		"LICENSE"
+	]
 }
