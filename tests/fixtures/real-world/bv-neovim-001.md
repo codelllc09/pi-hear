@@ -7,7 +7,7 @@
 ## 本战发现(负结果/机器事实,全部已修入 hear.py)
 
 1. **B站字幕登录才可见**: 匿名只有弹幕(danmaku xml);必须 --cookies
-   (配置 cookiesFile → ~/secrets/bilibili-cookies.txt)
+   (配置 cookiesFile 指向登录 cookies 文件)
 2. **AI字幕语言代码是 `ai-zh`,格式 srt**,不是猜想的 zh-Hans/vtt
 3. **B站把 AI 字幕挂在"普通字幕"下**: 要 `--write-subs` 才拉得到,
    `--write-auto-subs` 单用报 "no subtitles"(YouTube 类相反)——
