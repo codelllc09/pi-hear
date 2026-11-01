@@ -83,7 +83,8 @@ class TestArtifact(unittest.TestCase):
         r = json.loads(out)
         self.assertEqual(r["artifact"], art, "artifact path expected for local source")
         self.assertTrue(os.path.exists(art))
-        body = open(art, encoding="utf-8").read()
+        with open(art, encoding="utf-8") as f:
+            body = f.read()
         self.assertIn("review", body.lower())
         self.assertIn("[00:0", body, "timestamped lines expected")
         os.remove(art)  # keep fixtures dir clean
