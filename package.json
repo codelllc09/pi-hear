@@ -28,12 +28,14 @@
   "scripts": {
     "test": "python3 tests/test-hear.py",
     "check": "npx esbuild hear.ts --outfile=/dev/null && python3 -m py_compile scripts/hear.py tests/test-hear.py",
+    "check:arch": "depcruise hear.ts --output-type err",
     "prepublishOnly": "npm run check"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
+    "dependency-cruiser": "^18.8.0",
     "esbuild": "*",
     "typebox": "^1.4.3"
   },
