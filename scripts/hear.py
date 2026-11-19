@@ -196,10 +196,9 @@ def vad_stitch(wav_path, threads, gap_ms, max_seg_s, language, device):
     from funasr import AutoModel
     # funasr AutoModel prints its version banner to STDOUT on every init —
     # this tool's contract is pure JSON on stdout, so swallow it.
-    progress("stage", "loading models")
+    progress("stage", "loading vad")
     with _ctx.redirect_stdout(_io.StringIO()):
         vad = AutoModel(model="fsmn-vad", disable_update=True, device="cpu", log_level="ERROR")
-        asr = AutoModel(model="iic/SenseVoiceSmall", disable_update=True, device=device, log_level="ERROR")
     audio, sr = sf.read(wav_path, dtype="float32")
     if sr != 16000:
         raise RuntimeError(f"expected 16k wav, got {sr}")
@@ -221,6 +220,17 @@ def vad_stitch(wav_path, threads, gap_ms, max_seg_s, language, device):
         else:
             utts.append([s, e])
     slices = [audio[int(s * sr):int(e * sr)] for s, e in utts]
+    if not slices:
+        # Silent media (screen demos without narration, music-only) is a
+        # normal result, not an error: noSpeech flag + empty segments, exit 0.
+        # SenseVoice is NOT loaded on this path — VAD alone decides, fast.
+        # The caller model should route to frame sampling (ffmpeg + look),
+        # never retry ASR.
+        return {"engine": "sensevoice", "language": language, "rtf": None,
+                "inferS": 0.0, "noSpeech": True, "segments": [], "text": ""}
+    progress("stage", "loading asr")
+    with _ctx.redirect_stdout(_io.StringIO()):
+        asr = AutoModel(model="iic/SenseVoiceSmall", disable_update=True, device=device, log_level="ERROR")
     t0 = time.time()
     res = asr_transcribe(asr, slices, language)
     infer = time.time() - t0
@@ -252,9 +262,12 @@ def whisper_stitch(wav_path, model_size, language, device):
         if s.text.strip():
             segments.append({"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text.strip()})
     infer = time.time() - t0
-    return {"engine": "whisper", "language": info.language, "rtf": round(infer / dur, 3) if dur else None,
-            "inferS": round(infer, 1), "segments": segments,
-            "text": " ".join(s["text"] for s in segments)}
+    out = {"engine": "whisper", "language": info.language, "rtf": round(infer / dur, 3) if dur else None,
+           "inferS": round(infer, 1), "segments": segments,
+           "text": " ".join(s["text"] for s in segments)}
+    if not n:  # vad_filter skipped everything — same noSpeech contract as sensevoice
+        out["noSpeech"] = True
+    return out
 
 def lane_asr(source, engine, language, threads, gap_ms, max_seg_s, whisper_model, cookies, a_proxy, device):
     with tempfile.TemporaryDirectory(prefix="pi-hear-asr-") as tmp:

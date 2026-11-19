@@ -2,15 +2,15 @@
 
 # pi-hear
 
-One `hear()` tool, two lanes — the calling model is the router. Fully local:
-no VLM, no cloud ASR.
+One `transcribe()` tool (npm package `pi-hear`), two lanes — the calling
+model is the router. Fully local: no VLM, no cloud ASR.
 
 ```
-hear(source)                     source = URL → AI subtitles first (instant,
+transcribe(source)                source = URL → AI subtitles first (instant,
                                         quality UNVERIFIED — model judges);
                                  source = local file → local ASR
-hear(source, mode="asr")         ffmpeg → 16k mono → engine, timestamps forced
-hear(source, mode="subtitle")    force subtitle lane (URL only)
+transcribe(source, mode="asr")     ffmpeg → 16k mono → engine, timestamps forced
+transcribe(source, mode="subtitle") force subtitle lane (URL only)
 ```
 
 ## Lanes
@@ -80,6 +80,9 @@ Config `~/.pi/agent/pi-hear.json` (all keys optional):
 - Long transcripts render truncated (> 12k chars); a `.transcript.md` artifact
   is written next to local sources with a 50-segment preview. Batch/production
   work should use a batch pipeline, not this interactive tool.
+- No-speech media (silent screen demos, music-only) is a normal result:
+  `NO SPEECH DETECTED` + empty segments, exit 0 — the caller model must go
+  visual, not retry. SenseVoice is not even loaded (VAD decides alone).
 - Visual frames are out of scope — `ffmpeg` sampling + `look` composes.
 
 Validated against a cross-engine fixture (see `tests/fixtures/MANIFEST.md`).

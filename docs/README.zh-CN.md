@@ -2,15 +2,15 @@
 
 # pi-hear
 
-一个 `hear()` 工具，两条车道——路由权在调用方模型手里。纯本地测量：无
-VLM、无云 ASR。
+一个 `transcribe()` 工具（npm 包名 `pi-hear`），两条车道——路由权在调用方
+模型手里。纯本地测量：无 VLM、无云 ASR。
 
 ```
-hear(source)                     source = URL → 先取平台 AI 字幕（秒回，
+transcribe(source)                 source = URL → 先取平台 AI 字幕（秒回，
                                         质量未验——由模型判断）；
                                  source = 本地文件 → 直接本地 ASR
-hear(source, mode="asr")         ffmpeg → 16k 单声道 → 引擎，强制带时间戳
-hear(source, mode="subtitle")    强制走字幕车道（仅 URL）
+transcribe(source, mode="asr")     ffmpeg → 16k 单声道 → 引擎，强制带时间戳
+transcribe(source, mode="subtitle") 强制走字幕车道（仅 URL）
 ```
 
 ## 车道
@@ -76,6 +76,9 @@ pi -e git:github.com/codelllc09/pi-hear
   媒体转写前先向用户报出 duration×RTF 估时。
 - 长转写渲染截断（> 12k 字符）；本地源旁边会写一份 `.transcript.md` 工件
   并给 50 段预览。批量/生产任务请走批量流水线，别用这个交互工具。
+- 无语音媒体（无解说的屏摄演示、纯音乐）是正常结果而非错误：
+  `NO SPEECH DETECTED` + 空 segments、exit 0——调用方模型应改走视觉路径，
+  不要重试。此路径下 SenseVoice 根本不加载（VAD 单独判零，快速返回）。
 - 画面抽取不在范围内——`ffmpeg` 抽帧 + `look` 组合去做。
 
 跨引擎 fixture 验证（见 `tests/fixtures/MANIFEST.md`）。

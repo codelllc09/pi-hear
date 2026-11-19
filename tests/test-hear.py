@@ -100,13 +100,18 @@ class TestErrors(unittest.TestCase):
         code, out, _ = run(FIX, "--mode", "asr", "--engine", "whisper")
         self.assertEqual(code, 0)
         r = json.loads(out)
-        try:
-            import importlib.util as u
-            have = u.find_spec("faster_whisper") is not None
-        except Exception:
-            have = False
+        # probe the ANALYZER's interpreter (PY), not this test process —
+        # the venv and system python can disagree (found 2026-11-19:
+        # venv has faster-whisper 1.2.1, system python does not)
+        probe = subprocess.run([PY, "-c",
+            "import importlib.util as u; print(u.find_spec('faster_whisper') is not None)"],
+            capture_output=True, text=True)
+        have = probe.returncode == 0 and probe.stdout.strip() == "True"
         if have:
             self.assertGreaterEqual(len(r["asr"]["segments"]), 2)
+            art = FIX + ".transcript.md"
+            if r.get("artifact") == art and os.path.exists(art):
+                os.remove(art)  # real whisper runs write the fixture artifact — keep fixtures clean
         else:
             self.assertIn("faster-whisper", r["error"])
 
@@ -115,6 +120,44 @@ class TestErrors(unittest.TestCase):
         self.assertEqual(code, 0)
         r = json.loads(out)
         self.assertTrue(r["error"], "missing file must surface as error, not crash")
+
+class TestNoSpeech(unittest.TestCase):
+    """Silent media (screen demos without narration, music-only) is a normal
+    result, not an error: noSpeech flag, empty segments, exit 0 — the caller
+    model routes to frame sampling instead of retrying ASR. SenseVoice must
+    not even load on this path (VAD decides alone)."""
+    def _silent_wav(self, td):
+        f = os.path.join(td, "silent.wav")
+        r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+                            "-i", "anullsrc=r=16000:cl=mono", "-t", "3", f],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr[:200])
+        return f
+
+    def _assert_no_speech(self, engine):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            code, out, err = run(self._silent_wav(td), "--mode", "asr", "--engine", engine)
+            self.assertEqual(code, 0, err[:300])
+            r = json.loads(out)
+            self.assertIsNone(r["error"])
+            a = r["asr"]
+            self.assertTrue(a.get("noSpeech"), f"{engine}: silent media must set noSpeech")
+            self.assertEqual(a["segments"], [])
+            self.assertEqual(a["text"], "")
+            self.assertEqual(a["engine"], engine)
+
+    def test_silent_wav(self):
+        self._assert_no_speech("sensevoice")
+
+    def test_silent_wav_whisper(self):
+        # same contract on the whisper lane (skipped when faster-whisper missing)
+        probe = subprocess.run([PY, "-c",
+            "import importlib.util as u; print(u.find_spec('faster_whisper') is not None)"],
+            capture_output=True, text=True)
+        if not (probe.returncode == 0 and probe.stdout.strip() == "True"):
+            self.skipTest("faster-whisper not installed in analyzer venv")
+        self._assert_no_speech("whisper")
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
